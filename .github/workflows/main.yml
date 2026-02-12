@@ -1,0 +1,29 @@
+name: Jira Sprint Automation
+
+on:
+  schedule:
+    # 한국 시간 월요일 오전 07:30 (UTC 일요일 22:30)
+    - cron: '30 22 * * 0'
+  workflow_dispatch: # 필요할 때 수동으로 바로 실행해볼 수 있는 버튼 생성
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 가져오기
+        uses: actions/checkout@v3
+
+      - name: 파이썬 설치
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: 필요한 라이브러리 설치
+        run: pip install requests
+
+      - name: 자동화 스크립트 실행
+        env:
+          # 금고에 넣어둔 비밀번호를 프로그램에 전달
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        run: python sprint_bot.py
