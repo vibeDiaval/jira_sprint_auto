@@ -33,36 +33,35 @@ def run_jira_automation():
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     
     try:
-        # [Step 1] 미래 스프린트 찾기 (더 강력한 검색)
-        # 검색 필터를 제거하고 보드의 모든 스프린트를 가져와서 수동으로 필터링합니다.
+        # [Step 1] 전수 조사를 통한 미래 스프린트 찾기
         sprint_res = requests.get(f"{JIRA_BASE_URL}/rest/agile/1.0/board/{BOARD_ID}/sprint", auth=auth, headers=headers)
         all_sprints = sprint_res.json().get('values', [])
         
         active_sprints = [s for s in all_sprints if s['state'] == 'active']
-        # 'future' 상태인 것 중 가장 먼저 생성된 것을 타겟으로 잡습니다.
         future_sprints = [s for s in all_sprints if s['state'] == 'future']
         
+        # [Step A 강화] 미래 스프린트를 못 찾았을 때의 로그 보고
         if not future_sprints:
-            send_teams_report("보드에서 '시작 전(Future)' 상태인 스프린트를 찾을 수 없습니다. 스프린트가 생성되어 있는지 확인해주세요.", False)
+            sprint_summary = "\n".join([f"- {s['name']} (상태: {s['state']})" for s in all_sprints])
+            error_msg = f"미래(Future) 스프린트를 찾지 못했습니다.\n\n**현재 보드({BOARD_ID}) 상태:**\n{sprint_summary if all_sprints else '발견된 스프린트 없음'}"
+            send_teams_report(error_msg, False)
             return
             
         target_sprint = future_sprints[0]
         target_id = target_sprint['id']
 
-        # [Step 2] 기존 스프린트 종료 및 티켓 이관
+        # [Step 2 & 3] 기존 스프린트 종료 및 티켓 이관 (Logic 2.0 동일)
         incomplete_count = 0
         if active_sprints:
             active_id = active_sprints[0]['id']
-            # 미완료 티켓 수 미리 확인
             issues_res = requests.get(f"{JIRA_BASE_URL}/rest/agile/1.0/sprint/{active_id}/issue", auth=auth, headers=headers)
             issues = issues_res.json().get('issues', [])
             incomplete_count = len([i for i in issues if i['fields']['status']['statusCategory']['key'] != 'done'])
             
-            # 종료 및 이관 (이 시점에서 미래 스프린트로 티켓이 넘어갑니다)
             close_payload = {"state": "closed", "incompleteIssuesDestinationSprintId": target_id}
             requests.put(f"{JIRA_BASE_URL}/rest/agile/1.0/sprint/{active_id}", auth=auth, headers=headers, data=json.dumps(close_payload))
 
-        # [Step 3] 새 스프린트 업무 항목 점검 (이관 후에도 0개면 백로그 투입)
+        # 새 스프린트 업무 체크
         check_res = requests.get(f"{JIRA_BASE_URL}/rest/agile/1.0/sprint/{target_id}/issue", auth=auth, headers=headers)
         current_issue_count = check_res.json().get('total', 0)
         
@@ -76,7 +75,7 @@ def run_jira_automation():
                               auth=auth, headers=headers, data=json.dumps({"issues": [top_issue_key]}))
                 backlog_added = f"Y ({top_issue_key})"
             else:
-                send_teams_report("이관할 티켓도, 백로그 업무도 없어 스프린트를 시작할 수 없습니다.", False)
+                send_teams_report("이관할 티켓도, 백로그 업무도 없어 중단합니다.", False)
                 return
 
         # [Step 4] 새 스프린트 활성화
@@ -88,14 +87,13 @@ def run_jira_automation():
                                     auth=auth, headers=headers, 
                                     data=json.dumps({"state": "active", "startDate": start_date_str, "endDate": end_date_str}))
         
-        # [Step 5] 결과 보고
         if activate_res.status_code in [200, 204]:
             send_teams_report(f"스프린트 [{target_sprint['name']}] 활성화 완료!\n- 이관 티켓: {incomplete_count}개\n- 백로그 추가: {backlog_added}")
         else:
-            send_teams_report(f"활성화 실패: {activate_res.text}", False)
+            send_teams_report(f"활성화 단계 에러: {activate_res.text}", False)
 
     except Exception as e:
-        send_teams_report(f"에러 발생: {str(e)}", False)
+        send_teams_report(f"시스템 오류 발생: {str(e)}", False)
 
 if __name__ == "__main__":
     run_jira_automation()
